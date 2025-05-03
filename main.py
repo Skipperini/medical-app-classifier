@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from models import MODELS, load_model
 import os
 from controllers.classify_controller import router as classify_router
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'  # Временное решение
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import warnings
 warnings.filterwarnings("ignore", message="Found libiomp5md.dll")
@@ -13,17 +13,20 @@ app = FastAPI(
 )
 app.include_router(classify_router)
 
+model_names = ["efficientnet", "densenet", "resnet50"]
+
 @app.on_event("startup")
 async def startup_event():
     """Завантаження всіх моделей при старті програми"""
     try:
-        model_names = ["efficientnet_b0", "densenet121", "resnet50"]
         for name in model_names:
             MODELS[name] = load_model(name)
         print("✅ Усі моделі успішно завантажені!")
     except Exception as e:
-        print(f"❌ Помилка завантаження моделей: {str(e)}")
-        raise
+        return error_response(
+            f"Models not loaded: {str(e)}",
+            code=500
+        )
 
 if __name__ == "__main__":
     import uvicorn

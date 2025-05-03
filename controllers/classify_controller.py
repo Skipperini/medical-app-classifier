@@ -1,7 +1,11 @@
 from fastapi import APIRouter
 from models import *
+from response import *
+from validation.image import validate_image
+import io
 
 router = APIRouter(prefix="/classify")
+
 
 @router.post("/predict")
 async def predict(
@@ -9,7 +13,6 @@ async def predict(
         file: UploadFile = File(...),
         model_name: str = Form(...)
 ):
-
     """
     Класифікує MRI знімок мозку.
 
@@ -23,22 +26,26 @@ async def predict(
     - probabilities: Можливості для всіх класів
     """
     try:
-        # Перевірка моделі
-        if model_name not in MODELS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model {model_name} not available. Choose from {list(MODELS.keys())}"
-
+        if not file.size:
+            return error_response(
+                "Image not uploaded",
+                code=422
             )
 
-        # Читання та перевірка зображення
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
+        # Перевірка моделі
+        if model_name not in MODELS:
+            return error_response(
+                f"Model {model_name} not available. Choose from {list(MODELS.keys())}",
+                code=404
+            )
+        file = await file.read()
+        image = Image.open(io.BytesIO(file))
 
-        if not validate_mri_image(image):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid image: Doesn't look like a brain MRI scan"
+        # Читання та перевірка зображення
+        if not await validate_image(file):
+            return error_response(
+                "Invalid image: Doesn't look like a brain MRI scan",
+                code=409
             )
 
         # Передбачення
@@ -46,21 +53,18 @@ async def predict(
 
         # Перевірка confidence
         if result["confidence"] < MIN_CONFIDENCE:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "error": f"Low model confidence ({result['confidence']:.2f}). Image might be invalid or unclear.",
-                    "suggestion": "Please upload a clearer brain MRI scan.",
-                    **result
-                }
+            return error_response(
+                f"Low model confidence ({result['confidence']:.2f}). Image might be invalid or unclear.",
+                code=409
             )
-
-        return result
+        return success_response(
+            data=result
+        )
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
+        return error_response(
+            f"Internal server error: {str(e)}",
+            code=500
         )

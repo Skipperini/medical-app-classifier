@@ -1,5 +1,4 @@
 import os
-import io
 import numpy as np
 import torch
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
@@ -11,6 +10,8 @@ from typing import Dict, Any, Optional
 import torchvision.models as models
 from torch import nn
 
+from response import *
+
 # Конфігурація
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CLASS_NAMES = ["glioma", "meningioma", "notumor", "pituitary"]
@@ -19,16 +20,13 @@ MIN_CONFIDENCE = 0.5
 # Аугментації для валідації
 val_transform = A.Compose([
     A.Resize(224, 224),
-A.HorizontalFlip(p=0.5),
-    A.VerticalFlip(p=0.5),
-    A.Rotate(limit=30, p=0.5),
-    A.RandomBrightnessContrast(p=0.2),
     A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ToTensorV2(),
 ])
 
 # Глобальний словник для зберігання моделей
 MODELS: Dict[str, Any] = {}
+
 
 def build_resnet50() -> nn.Module:
     model = models.resnet50(weights=None)
@@ -43,20 +41,26 @@ def build_resnet50() -> nn.Module:
 
 def load_model(model_name: str) -> nn.Module:
     """Завантажує модель з урахуванням її архітектури"""
-    if model_name == "efficientnet_b0":
+    if model_name == "efficientnet":
         model = models.efficientnet_b0(weights=None)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(CLASS_NAMES))
-    elif model_name == "densenet121":
+    elif model_name == "densenet":
         model = models.densenet121(weights=None)
         model.classifier = nn.Linear(1024, len(CLASS_NAMES))
     elif model_name == "resnet50":
         model = build_resnet50()
     else:
-        raise ValueError(f"Unsupported model: {model_name}")
+        return error_response(
+            f"Unsupported model: {model_name}",
+            code=409
+        )
 
     model_path = f"models/{model_name}.pth"
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model weights not found at {model_path}")
+        return error_response(
+            f"Model weights not found at {model_path}",
+            code=404
+        )
 
     checkpoint = torch.load(model_path, map_location=DEVICE)
 
@@ -85,7 +89,10 @@ def load_model(model_name: str) -> nn.Module:
 def predict_image(image: Image.Image, model_name: str) -> Dict[str, Any]:
     """Виконання прогноз на зображенні"""
     if model_name not in MODELS:
-        raise HTTPException(status_code=400, detail=f"Model {model_name} not loaded")
+        return error_response(
+            f"Model {model_name} not loaded",
+            code=404
+        )
 
     model = MODELS.get(model_name)
 
@@ -101,18 +108,9 @@ def predict_image(image: Image.Image, model_name: str) -> Dict[str, Any]:
         pred_prob, pred_class = torch.max(probs, 1)
 
     return {
-        "model_used": model_name,
         "predicted_class": CLASS_NAMES[pred_class.item()],
-        "confidence": round(pred_prob.item(), 4),
-        "probabilities": {cls: round(prob.item(), 4) for cls, prob in zip(CLASS_NAMES, probs[0])}
+        "confidence": round(pred_prob.item(), 2),
+        "probabilities": {cls: round(prob.item(), 2) for cls, prob in zip(CLASS_NAMES, probs[0])}
     }
 
-
-def validate_mri_image(image: Image.Image) -> bool:
-    # Базова перевірка зображення
-    if image.mode not in ("L", "RGB"):
-        return False
-    if min(image.size) < 128:
-        return False
-    return True
 
