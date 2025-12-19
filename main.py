@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from models import MODELS, load_model
 import os
 from controllers.classify_controller import router as classify_router
+from response import error_response
+
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import warnings
@@ -14,6 +16,7 @@ app = FastAPI(
 app.include_router(classify_router)
 
 model_names = ["efficientnet", "densenet", "resnet50"]
+segmenters = ["unet", "segformer"]
 
 @app.on_event("startup")
 async def startup_event():
@@ -21,12 +24,22 @@ async def startup_event():
     try:
         for name in model_names:
             MODELS[name] = load_model(name)
+
+        for name in segmenters:
+            model = load_model(name, model_type="segmenter")
+            if model:
+                MODELS[name] = model
+                print(f"✅ Segmenter loaded: {name}")
+            else:
+                print(f"⚠️ Failed to load: {name}")
+
         print("✅ Усі моделі успішно завантажені!")
     except Exception as e:
         return error_response(
             f"Models not loaded: {str(e)}",
             code=500
         )
+
 
 if __name__ == "__main__":
     import uvicorn
