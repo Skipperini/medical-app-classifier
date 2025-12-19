@@ -11,7 +11,8 @@ router = APIRouter(prefix="/classify")
 async def predict(
         request: Request,
         file: UploadFile = File(...),
-        model_name: str = Form(...)
+        model_name: str = Form(...),
+        segment_model: str = Form(..., description="unet, segformer")
 ):
     """
     Класифікує MRI знімок мозку.
@@ -38,11 +39,15 @@ async def predict(
                 f"Model {model_name} not available. Choose from {list(MODELS.keys())}",
                 code=404
             )
-        file = await file.read()
-        image = Image.open(io.BytesIO(file))
+        file_bytes = await file.read()
+        image = Image.open(io.BytesIO(file_bytes))
 
+
+        if not await validate_image(file_bytes):
+            return error_response("Invalid image", code=409)
+        # image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
         # Читання та перевірка зображення
-        if not await validate_image(file):
+        if not await validate_image(file_bytes):
             return error_response(
                 "Invalid image: Doesn't look like a brain MRI scan",
                 code=409
@@ -57,6 +62,7 @@ async def predict(
                 f"Low model confidence ({result['confidence']:.2f}). Image might be invalid or unclear.",
                 code=409
             )
+        result["result_image"] = predict_segmentation(image, segment_model)
         return success_response(
             data=result
         )
